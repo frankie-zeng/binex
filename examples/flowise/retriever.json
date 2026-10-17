@@ -10,28 +10,23 @@
       }
     },
     {
-      "id": "toolAgentflow_0",
+      "id": "retrieverAgentflow_0",
       "type": "agentFlow",
       "data": {
-        "name": "toolAgentflow",
-        "label": "Tool",
-        "inputs": {"toolAgentflowSelectedTool": "calculator"}
-      }
-    },
-    {
-      "id": "stickyNoteAgentflow_0",
-      "type": "agentFlow",
-      "data": {
-        "name": "stickyNoteAgentflow",
-        "label": "Note",
-        "inputs": {"note": "ignored"}
+        "name": "retrieverAgentflow",
+        "label": "Retriever",
+        "inputs": {
+          "retrieverKnowledgeDocumentStores": [{"documentStore": "docs:Articles"}],
+          "retrieverQuery": "{{ question }}",
+          "outputFormat": "text"
+        }
       }
     }
   ],
   "edges": [
     {
       "source": "startAgentflow_0",
-      "target": "toolAgentflow_0",
+      "target": "retrieverAgentflow_0",
       "sourceHandle": "startAgentflow_0-output-0"
     }
   ]

@@ -33,6 +33,8 @@ class ExecContext:
     iteration: dict[str, Any] | None = None
     human_input: dict[str, Any] | None = None
     iteration_resume: dict[str, Any] | None = None
+    agent_resume: dict[str, Any] | None = None
+    nested_resume: dict[str, Any] | None = None
     paused: bool = False
     pause_node_id: str | None = None
     human_mode: str | None = None
@@ -42,6 +44,8 @@ class ExecContext:
     persist_state: bool = False
     skip_ssrf: bool = False
     js_runner: Any = None
+    sink: Any = None
+    flow_depth: int = 0
 
     def templates(self) -> TemplateContext:
         return TemplateContext(

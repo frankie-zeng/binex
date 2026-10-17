@@ -32,18 +32,25 @@ flow.json` prints the binding.
 | Direct Reply | `local://echo` | |
 | A2A | `flowise-a2a://message/send` | |
 | CAO | `flowise-cao://run-step` | |
+| Tool | `local://tool` | |
+| Retriever | `local://retriever` | |
+| Execute Flow | `local://execute-flow` | |
 | Sticky Note | `local://noop` (skipped) | |
 
-Tool, Retriever, and Execute Flow stop the run with an error that says what to
-do instead. An unknown `data.name` does the same. Sticky notes are ignored.
+Every Agentflow node type from the fork's `main` and from PR #2 runs. Sticky
+notes are skipped. An unknown `data.name` is still an error. A missing local
+implementation for one Flowise *component* (a specific tool, store, or MCP
+server) is a node failure that names that component. It is not an unsupported
+node type.
 
 LLM, Agent, and Condition Agent call LiteLLM with the same optional arguments
 as `LLMAdapter` (`api_base`, `api_key`, `temperature`, `max_tokens`). Map a
-Flowise component plus `modelName` (`chatOpenAI` + `gpt-4o-mini` becomes
-`openai/gpt-4o-mini`) or pass a LiteLLM id directly. An Agent node that lists
-Flowise tool catalogs or document stores fails. Set `inputs.binexTools` to
-Binex tool URIs, and clear the Flowise tool list, to run those tools through
-`LLMAdapter`.
+Flowise chat-model `name` plus `modelName` (`chatOpenAI` + `gpt-4o-mini`
+becomes `openai/gpt-4o-mini`, `chatGroq` becomes `groq/...`, `chatLitellm`
+keeps the model id as written). An unknown component with `baseUrl` is called
+as `openai/{modelName}` against that base. API keys are read from any model
+config field whose name ends in `apiKey`. `inputs.binexTools` still runs
+through `LLMAdapter` when the Agent node has no Flowise tool or knowledge list.
 
 A2A speaks the fork's JSON-RPC `message/send` contract. CAO speaks the fork's
 `cao-server` contract (`POST /sessions`, `POST /terminals/run-step`, terminal
@@ -51,8 +58,71 @@ input, inbox). Neither path uses Binex's YAML `a2a://` or `cao://` adapters,
 so the stored turns match what Flowise already writes.
 
 Custom Function runs the JavaScript body with Node's `vm`. The context receives
-`$input`, `$flow`, `$vars`, and named `$variables`. It does not receive
-`process.env`.
+`$input`, `$flow`, `$vars`, and named `$variables` from
+`customFunctionInputVariables`. It does not receive `process.env`.
+
+HTTP accepts `GET`, `POST`, `PUT`, `DELETE`, and `PATCH`. Body types are
+`json`, `raw`, `formData`, and `xWwwFormUrlencoded`. Response types are
+`json`, `text`, `arraybuffer`, and `base64`. Credentials are
+`httpBasicAuth`, `httpBearerToken`, and `httpApiKey`.
+
+Condition operators match Flowise: string
+`contains`, `notContains`, `startsWith`, `endsWith`, `equal`, `notEqual`,
+`regex`, `isEmpty`, `notEmpty`; number
+`smaller`, `smallerEqual`, `equal`, `notEqual`, `larger`, `largerEqual`,
+`isEmpty`, `notEmpty`; boolean `equal`, `notEqual`. Number `isEmpty` is true
+only for a missing or blank value, so `0` is not empty.
+
+LLM and Agent memory types are `allMessages`, `windowSize`,
+`conversationSummary`, and `conversationSummaryBuffer` (token estimate
+`len/4`, limit `llmMemoryMaxTokenLimit` / `agentMemoryMaxTokenLimit`, default
+2000). Summary text is sent to the model and does not replace the stored
+chat history. `llmReturnResponseAs` and `agentReturnResponseAs` choose whether
+the reply is stored as `assistantMessage` or `userMessage`. Structured output
+appends the JSON schema and parses the object. After an Agent tool loop, one
+extra call converts the answer into that schema.
+
+### Component bridge
+
+Flowise has dozens of tool, vector-store, embedding, and MCP implementations.
+The sandbox does not install that catalog. Each component resolves in order:
+
+1. A local Python equivalent, when one exists.
+2. Data on the run payload (`knowledge` chunks, or `flows` for Execute Flow).
+3. `POST {componentUrl}/api/v1/internal/components/execute` on the Flowise
+   server. Chat models do not use this callback; they use LiteLLM.
+
+`componentUrl` falls back to `FLOWISE_COMPONENT_URL` and then
+`FLOWISE_BASE_URL`. `callbackToken` falls back to `FLOWISE_CALLBACK_TOKEN`
+and is sent as `Authorization: Bearer`. The callback host is the
+operator-configured server, so it is not SSRF-checked. MCP URLs and the local
+`requestsGet` / `requestsPost` tools are flow-authored and are checked.
+
+| Flowise component | Default path |
+|---|---|
+| Chat models listed above | LiteLLM. Provider built-ins (`web_search_preview`, `code_interpreter`, `image_generation`, Gemini and Anthropic equivalents) are passed through on the completion request. |
+| `calculator` | Binex calculator. |
+| `requestsGet`, `requestsPost` | `httpx`, with the SSRF check. |
+| `currentDateTime` and the `getDateTime` aliases | UTC ISO 8601. |
+| `readFile`, `writeFile` | Files under `/workspace` only. |
+| `customTool` | The tool's JavaScript, same Node runner as Custom Function. |
+| Document store on `knowledge` | Lexical overlap of `pageContent` / `content`. |
+| Other tools, retrievers, vector stores, embeddings, MCP servers | Component callback. MCP with `mcpServerUrl` uses JSON-RPC `tools/call` directly. |
+
+Agent tools that set `agentSelectedToolRequiresHumanInput` pause the run the
+same way a Human Input node does. Resume with `proceed` runs the tool.
+`reject` feeds `Human rejected this tool call.` back to the model. The
+checkpoint field is `agentResume`.
+
+Execute Flow runs a child whose id is `executeFlowSelectedFlow`. Calling the
+same chatflow id is an error. Nesting stops after five levels. When
+`flows[id]` is present the child graph runs in this sandbox and its node
+events include that `chatflowId`. Otherwise the sandbox calls the existing
+prediction route described in the server section. `executeFlowReturnResponseAs` sets the chat role.
+`executeFlowOverrideConfig` is JSON merged into the child inputs (`vars`,
+`question`, `history`, `form`, `webhook`). A human pause inside the child
+checkpoints the child and the parent; resume re-enters the Execute Flow node
+and forwards the decision.
 
 HTTP requests go through the existing SSRF check. Private and loopback
 addresses are rejected unless `BINEX_ALLOW_PRIVATE_URLS=1`. A2A and CAO are
@@ -102,6 +172,10 @@ A request is one JSON object:
   "secrets": {"OPENAI_API_KEY": "sk-from-the-server"},
   "credentials": {"node-or-credential-id": {"token": "sent-per-run"}},
   "vars": {},
+  "flows": {"child-chatflow-id": {"nodes": [], "edges": []}},
+  "knowledge": {"store-id": [{"pageContent": "chunk", "metadata": {}}]},
+  "componentUrl": "https://flowise.example",
+  "callbackToken": "sent-per-run",
   "resume": {"humanInput": {"type": "proceed", "feedback": "", "startNodeId": "humanInputAgentflow_0"}}
 }
 ```
@@ -240,9 +314,41 @@ This repository does not modify Flowise. The server work, against
    `{type, feedback, startNodeId}` in `resume.humanInput`. Do not run the
    human node on the server.
 
-5. **Leave unsupported nodes as a publish-time error.** If inspect or the
-   run reports Tool, Retriever, Execute Flow, or an unknown type, show that
-   message in the UI. Do not fall back to the in-process walker for those
-   nodes while the sandbox flag is on.
+5. **Pass child flows and document chunks on the run.** When an Execute Flow
+   node points at another Agentflow V2 chatflow, put that graph in
+   `flows[childChatflowId]`. When a Retriever or Agent knowledge list points
+   at a document store the server can read, put the upserted chunks in
+   `knowledge[storeId]` as `{pageContent, metadata}` objects. The sandbox
+   then runs the child graph and ranks chunks locally.
+
+6. **Implement the component callback.** There is no generic component-execute
+   route in Flowise today. Add:
+
+   `POST /api/v1/internal/components/execute`
+
+   Body: `{kind, component, inputs, credential, toolArgs, query, chatflowId,
+   sessionId}`. `kind` is `tool`, `retriever`, `vectorstore`, `embedding`,
+   `mcp`, or `chat`. Authorize it with the same bearer the server put in
+   `callbackToken`. Load the Flowise component class, `init` it, and return
+   `{content, sourceDocuments, artifacts}`. The sandbox calls this only when
+   it has no local implementation and no inline `knowledge` / `flows` data.
+   Send `componentUrl` (the server's own public base URL) and `callbackToken`
+   on every run.
+
+7. **Keep the prediction route for Execute Flow misses.** When the child
+   graph is not in `flows` (a Chatflow v1 or multi-agent flow, or the server
+   prefers the prediction API), the sandbox calls the existing endpoint:
+
+   `POST {executeFlowBaseURL or FLOWISE_BASE_URL}/api/v1/prediction/{chatflowId}`
+
+   Body `{question, chatId, overrideConfig}`, header `flowise-tool: true`,
+   and `Authorization: Bearer` from the `chatflowApi` credential
+   (`chatflowApiKey`). A node-supplied base URL is SSRF-checked. The
+   operator's `FLOWISE_BASE_URL` is not.
+
+8. **Unknown node types stay a publish-time error.** Tool, Retriever, and
+   Execute Flow now run. If inspect or the run reports an unknown
+   `data.name`, show that message in the UI. Do not fall back to the
+   in-process walker while the sandbox flag is on.
 
 Sample graphs are in `examples/flowise/`.

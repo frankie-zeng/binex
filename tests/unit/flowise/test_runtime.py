@@ -9,7 +9,7 @@ import pytest
 
 from binex.flowise.engine import collect_events
 from binex.flowise.graph import FlowLoadError, load_flow
-from binex.flowise.mapping import describe_flow
+from binex.flowise.mapping import SUPPORTED, describe_flow
 from binex.flowise.session import SessionStore
 from binex.flowise.variables import (
     TemplateContext,
@@ -18,7 +18,15 @@ from binex.flowise.variables import (
     replace_output_placeholder,
     resolve_value,
 )
-from tests.unit.flowise.support import edge, finish_ids, graph, load_example, node, run_body
+from tests.unit.flowise.support import (
+    EXAMPLES,
+    edge,
+    finish_ids,
+    graph,
+    load_example,
+    node,
+    run_body,
+)
 
 
 def _start() -> dict[str, Any]:
@@ -49,6 +57,15 @@ def test_load_flow_data_string_and_bindings() -> None:
         load_flow({"nodes": [{"id": "x", "data": {}}]})
 
 
+def test_every_supported_node_has_a_sample() -> None:
+    seen: set[str] = set()
+    for path in sorted(EXAMPLES.glob("*.json")):
+        for row in describe_flow(load_flow(load_example(path.name))):
+            if row["supported"]:
+                seen.add(str(row["flowiseType"]))
+    assert SUPPORTED <= seen
+
+
 async def test_examples_are_supported() -> None:
     for name in (
         "direct-reply.json",
@@ -59,6 +76,13 @@ async def test_examples_are_supported() -> None:
         "llm.json",
         "a2a.json",
         "cao.json",
+        "tool.json",
+        "retriever.json",
+        "execute-flow.json",
+        "agent.json",
+        "http.json",
+        "custom-function.json",
+        "condition-agent.json",
     ):
         rows = describe_flow(load_flow(load_example(name)))
         assert all(row["supported"] for row in rows), name
@@ -122,7 +146,9 @@ async def test_condition_example_routes_else(tmp_path) -> None:
         ("number", "largerEqual", 2, 2, True),
         ("number", "equal", "2", 2, True),
         ("number", "notEqual", 2, 3, True),
-        ("number", "isEmpty", 0, 0, True),
+        ("number", "isEmpty", 0, 0, False),
+        ("number", "isEmpty", "", "", True),
+        ("number", "notEmpty", 0, 0, True),
         ("number", "notEmpty", 1, 0, True),
         ("boolean", "equal", True, True, True),
         ("boolean", "notEqual", True, False, True),
@@ -524,27 +550,19 @@ async def test_webhook_form_and_schedule(tmp_path) -> None:
 
 
 async def test_unsupported_nodes_and_structural_errors(tmp_path) -> None:
-    (tool, events), _store = await _run(load_example("unsupported-tool.json"), tmp_path)
-    assert tool.status == "ERROR"
-    assert "HTTP node" in (tool.error or "")
+    (tool, events), _store = await _run(load_example("tool.json"), tmp_path)
+    assert tool.status == "FINISHED"
+    assert tool.text == "4"
+    assert tool.state["last"] == "4"
     assert events[0]["type"] == "run.start"
     assert events[-1]["type"] == "run.finish"
 
-    mixed = graph(
-        [
-            _start(),
-            node("tool", "toolAgentflow", {}, label="Tool"),
-            node("retriever", "retrieverAgentflow", {}, label="Retriever"),
-            node("nested", "executeFlowAgentflow", {}, label="Nested"),
-            node("mystery", "notANode", {}, label="Mystery"),
-        ],
-        [],
+    (unknown, _events), _store = await _run(
+        load_example("unknown.json"), tmp_path, sessionId="mystery"
     )
-    (outcome, _events), _store = await _run(mixed, tmp_path, sessionId="bad")
-    message = outcome.error or ""
-    assert "Document stores" in message
-    assert "Nested flows" in message
-    assert "Unknown Agentflow" in message
+    assert unknown.status == "ERROR"
+    assert "Unknown Agentflow" in (unknown.error or "")
+    assert "notANode" in (unknown.error or "")
 
     two = graph(
         [_start(), node("other", "directReplyAgentflow", {"directReplyMessage": "x"})],

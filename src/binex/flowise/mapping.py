@@ -50,8 +50,8 @@ _BINDINGS: dict[str, NodeBinding] = {
         "llm://",
         None,
         True,
-        "LLMAdapter completion. Flowise tool catalogs are rejected with a pointer "
-        "to HTTP, CustomFunction, or binexTools.",
+        "LiteLLM tool loop. Common tools run in Python; other Flowise components "
+        "call the server component endpoint. binexTools still uses LLMAdapter.",
     ),
     "conditionAgentflow": NodeBinding(
         "conditionAgentflow",
@@ -145,29 +145,26 @@ _BINDINGS: dict[str, NodeBinding] = {
     "toolAgentflow": NodeBinding(
         "toolAgentflow",
         "Tool",
-        "",
+        "local://tool",
         None,
-        False,
-        "The Flowise tool catalog is not installed in the sandbox. "
-        "Call the service with an HTTP node or a Custom Function.",
+        True,
+        "Local tools run in Python. Other Flowise tools POST the component endpoint.",
     ),
     "retrieverAgentflow": NodeBinding(
         "retrieverAgentflow",
         "Retriever",
-        "",
+        "local://retriever",
         None,
-        False,
-        "Document stores stay on the Flowise server. Pass retrieved text in as "
-        "an input, or call a retrieval endpoint with an HTTP node.",
+        True,
+        "Uses knowledge chunks on the run, or the component endpoint for that store.",
     ),
     "executeFlowAgentflow": NodeBinding(
         "executeFlowAgentflow",
         "Execute Flow",
-        "",
+        "local://execute-flow",
         None,
-        False,
-        "Nested flows are not executed in the sandbox. Inline the child flow, "
-        "or have the Flowise server expand it before dispatch.",
+        True,
+        "Runs a child flow from the payload, or POST /api/v1/prediction/{id}.",
     ),
 }
 

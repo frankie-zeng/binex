@@ -38,6 +38,7 @@ class ExecuteOutcome:
     execution_data: list[dict[str, Any]]
     state: dict[str, Any]
     error: str | None = None
+    pause_node_id: str | None = None
 
 
 @dataclass
@@ -79,8 +80,14 @@ async def execute_flow(
     js_runner: Any | None = None,
     skip_ssrf: bool = False,
     max_steps: int = 1000,
+    nested: bool = False,
+    depth: int = 0,
 ) -> ExecuteOutcome:
-    """Run one flow. ``sink.emit`` receives each NDJSON-ready event."""
+    """Run one flow. ``sink.emit`` receives each NDJSON-ready event.
+
+    ``nested`` suppresses ``run.start`` and ``run.finish`` so Execute Flow can
+    reuse this walker. The child still emits its own node events.
+    """
     parsed = request if isinstance(request, RunRequest) else RunRequest.model_validate(request)
     check_secret_names(parsed.secrets)
     target = sink or _ListSink()
@@ -97,6 +104,8 @@ async def execute_flow(
                 js_runner,
                 skip_ssrf,
                 max_steps,
+                nested,
+                depth,
             )
     finally:
         if owns_http:
@@ -121,6 +130,8 @@ async def _execute(
     js_runner: Any,
     skip_ssrf: bool,
     max_steps: int,
+    nested: bool = False,
+    depth: int = 0,
 ) -> ExecuteOutcome:
     graph = load_flow(request.flow)
     ctx = ExecContext(
@@ -132,19 +143,22 @@ async def _execute(
         max_steps=max_steps,
         skip_ssrf=skip_ssrf,
         js_runner=js_runner,
+        sink=sink,
+        flow_depth=depth,
     )
-    await _emit(
-        sink,
-        request,
-        {
-            "type": "run.start",
-            "runId": request.run_id,
-            "chatflowId": request.chatflow_id,
-            "sessionId": request.session_key,
-            "workspaceId": request.workspace_id,
-            "status": "INPROGRESS",
-        },
-    )
+    if not nested:
+        await _emit(
+            sink,
+            request,
+            {
+                "type": "run.start",
+                "runId": request.run_id,
+                "chatflowId": request.chatflow_id,
+                "sessionId": request.session_key,
+                "workspaceId": request.workspace_id,
+                "status": "INPROGRESS",
+            },
+        )
     error: str | None = None
     try:
         missing = unsupported_nodes(graph)
@@ -168,29 +182,31 @@ async def _execute(
             )
         ctx.store.clear_checkpoint(request.chatflow_id, request.session_key)
     human = _human_pause_body(ctx) if ctx.paused else None
-    await _emit(
-        sink,
-        request,
-        {
-            "type": "run.finish",
-            "runId": request.run_id,
-            "chatflowId": request.chatflow_id,
-            "sessionId": request.session_key,
-            "workspaceId": request.workspace_id,
-            "status": status,
-            "text": ctx.last_text,
-            "state": redact_tree(ctx.state),
-            "executionData": ctx.executed,
-            "humanInput": human,
-            "error": {"message": error} if error else None,
-        },
-    )
+    if not nested:
+        await _emit(
+            sink,
+            request,
+            {
+                "type": "run.finish",
+                "runId": request.run_id,
+                "chatflowId": request.chatflow_id,
+                "sessionId": request.session_key,
+                "workspaceId": request.workspace_id,
+                "status": status,
+                "text": ctx.last_text,
+                "state": redact_tree(ctx.state),
+                "executionData": ctx.executed,
+                "humanInput": human,
+                "error": {"message": error} if error else None,
+            },
+        )
     return ExecuteOutcome(
         status=status,
         text=ctx.last_text,
         execution_data=ctx.executed,
         state=ctx.state,
         error=error,
+        pause_node_id=ctx.pause_node_id if ctx.paused else None,
     )
 
 
@@ -260,6 +276,10 @@ def _restore_checkpoint(ctx: ExecContext, human: dict[str, Any]) -> None:
     ]
     iteration = checkpoint.get("iterationResume")
     ctx.iteration_resume = dict(iteration) if isinstance(iteration, dict) else None
+    agent_resume = checkpoint.get("agentResume")
+    ctx.agent_resume = dict(agent_resume) if isinstance(agent_resume, dict) else None
+    nested_resume = checkpoint.get("nestedResume")
+    ctx.nested_resume = dict(nested_resume) if isinstance(nested_resume, dict) else None
 
 
 def _check_trigger(ctx: ExecContext) -> None:
@@ -344,6 +364,7 @@ async def _execute_node(
         {
             "type": "node.start",
             "runId": ctx.request.run_id,
+            "chatflowId": ctx.request.chatflow_id,
             "nodeId": node.id,
             "nodeLabel": node.label,
             "nodeName": node.name,
@@ -721,6 +742,7 @@ async def _emit_node_done(
         {
             "type": "node.finish",
             "runId": ctx.request.run_id,
+            "chatflowId": ctx.request.chatflow_id,
             "nodeId": node.id,
             "nodeLabel": node.label,
             "nodeName": node.name,
@@ -807,6 +829,7 @@ async def _emit_failure(
         {
             "type": "node.error",
             "runId": ctx.request.run_id,
+            "chatflowId": ctx.request.chatflow_id,
             "nodeId": node.id,
             "nodeLabel": node.label,
             "nodeName": node.name,
@@ -889,6 +912,8 @@ def _save_checkpoint(ctx: ExecContext) -> None:
             "persistState": ctx.persist_state,
             "stoppedNodeId": ctx.pause_node_id,
             "iterationResume": ctx.iteration_resume,
+            "agentResume": ctx.agent_resume,
+            "nestedResume": ctx.nested_resume,
         },
     )
 

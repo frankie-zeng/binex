@@ -19,20 +19,47 @@ from binex.adapters.llm import LLMAdapter
 from binex.models.artifact import Artifact, Lineage
 from binex.models.task import TaskNode
 
+# Flowise `this.name` -> LiteLLM provider prefix. chatLitellm is omitted on
+# purpose: its modelName is already a LiteLLM id.
 _PROVIDER_PREFIX = {
     "chatOpenAI": "openai",
     "azureChatOpenAI": "azure",
     "chatAnthropic": "anthropic",
     "chatGoogleGenerativeAI": "gemini",
     "chatGoogle": "gemini",
+    "chatGoogleVertexAI": "vertex_ai",
+    "chatMistral": "mistral",
     "chatMistralAI": "mistral",
+    "groqChat": "groq",
     "chatGroq": "groq",
     "chatOllama": "ollama",
     "ollama": "ollama",
     "chatDeepseek": "deepseek",
+    "deepseek": "deepseek",
     "chatTogetherAI": "together_ai",
     "chatOpenRouter": "openrouter",
+    "chatXAI": "xai",
+    "xai": "xai",
+    "chatFireworks": "fireworks_ai",
+    "chatCohere": "cohere",
+    "chatCerebras": "cerebras",
+    "chatCloudflareWorkersAI": "cloudflare",
+    "chatHuggingFace": "huggingface",
+    "chatPerplexity": "perplexity",
+    "chatSambanova": "sambanova",
+    "chatNvdiaNIM": "nvidia_nim",
+    "chatNvidiaNIM": "nvidia_nim",
+    "awsChatBedrock": "bedrock",
+    "chatAWSBedrock": "bedrock",
+    "AWSChatBedrock": "bedrock",
+    "chatAlibabaTongyi": "dashscope",
+    "chatBaiduWenxin": "qianfan",
+    "chatIBMWatsonx": "watsonx",
+    "chatLocalAI": "openai",
+    "chatOpenAICustom": "openai",
+    "chatCometAPI": "openai",
 }
+_PASSTHROUGH = frozenset({"chatLitellm", "litellm"})
 
 
 @dataclass
@@ -42,6 +69,7 @@ class LLMCompletion:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     raw_model: str = ""
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
 
 
 class LLMCaller(Protocol):
@@ -54,6 +82,7 @@ class LLMCaller(Protocol):
         api_base: str | None,
         temperature: float | None,
         max_tokens: int | None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> LLMCompletion: ...
 
 
@@ -74,13 +103,25 @@ def resolve_model(component: str | None, config: dict[str, Any] | None) -> Resol
     model_name = settings.get("modelName") or settings.get("model") or settings.get("model_name")
     model_name = str(model_name) if model_name else ""
 
+    api_base = _first_text(
+        settings.get("baseUrl"),
+        settings.get("baseURL"),
+        settings.get("basePath"),
+        settings.get("apiBase"),
+        settings.get("api_base"),
+    )
     if "/" in component_name or _looks_like_model(component_name):
         model = component_name
     elif model_name and "/" in model_name:
         model = model_name
+    elif model_name and component_name in _PASSTHROUGH:
+        model = model_name
+    elif model_name and component_name in _PROVIDER_PREFIX:
+        model = f"{_PROVIDER_PREFIX[component_name]}/{model_name}"
+    elif model_name and api_base:
+        model = f"openai/{model_name}"
     elif model_name:
-        prefix = _PROVIDER_PREFIX.get(component_name)
-        model = f"{prefix}/{model_name}" if prefix else model_name
+        model = model_name
     else:
         raise RuntimeError(
             "LLM node is missing a model. Set llmModel to a LiteLLM id "
@@ -91,17 +132,7 @@ def resolve_model(component: str | None, config: dict[str, Any] | None) -> Resol
 
     temperature = _optional_float(settings.get("temperature"))
     max_tokens = _optional_int(settings.get("maxTokens") or settings.get("max_tokens"))
-    api_key = _first_text(
-        settings.get("apiKey"),
-        settings.get("openAIApiKey"),
-        settings.get("anthropicApiKey"),
-    )
-    api_base = _first_text(
-        settings.get("baseUrl"),
-        settings.get("baseURL"),
-        settings.get("apiBase"),
-        settings.get("api_base"),
-    )
+    api_key = _api_key(settings)
     return ResolvedModel(
         model=model,
         api_key=api_key,
@@ -117,6 +148,26 @@ def _looks_like_model(value: str) -> bool:
         return False
     prefixes = ("gpt-", "claude", "gemini", "ollama/", "o1", "o3", "o4")
     return value.startswith(prefixes)
+
+
+def _api_key(settings: dict[str, Any]) -> str | None:
+    """First credential-like value. Flowise names differ per provider."""
+    preferred = (
+        settings.get("apiKey"),
+        settings.get("openAIApiKey"),
+        settings.get("anthropicApiKey"),
+        settings.get("googleApiKey"),
+    )
+    found = _first_text(*preferred)
+    if found:
+        return found
+    for key, value in settings.items():
+        folded = str(key).replace("_", "").lower()
+        if folded.endswith("apikey") or folded in {"apitoken", "bearer"}:
+            text = _first_text(value)
+            if text:
+                return text
+    return None
 
 
 def _first_text(*values: Any) -> str | None:
@@ -180,6 +231,35 @@ def _message_text(content: Any) -> str:
     return str(content)
 
 
+def _tool_calls(message: Any) -> list[dict[str, Any]]:
+    raw = getattr(message, "tool_calls", None)
+    if raw is None and isinstance(message, dict):
+        raw = message.get("tool_calls")
+    if not raw:
+        return []
+    calls: list[dict[str, Any]] = []
+    for index, item in enumerate(raw):
+        function = getattr(item, "function", None)
+        if function is None and isinstance(item, dict):
+            function = item.get("function") or item
+        name = getattr(function, "name", None)
+        arguments = getattr(function, "arguments", None)
+        call_id = getattr(item, "id", None)
+        if isinstance(function, dict):
+            name = name or function.get("name")
+            arguments = arguments if arguments is not None else function.get("arguments")
+        if isinstance(item, dict):
+            call_id = call_id or item.get("id")
+        calls.append(
+            {
+                "id": str(call_id or f"call_{index}"),
+                "name": str(name or ""),
+                "arguments": arguments if arguments is not None else "{}",
+            }
+        )
+    return calls
+
+
 class LiteLLMCaller:
     """Default caller. Tests replace this with a fake."""
 
@@ -192,6 +272,7 @@ class LiteLLMCaller:
         api_base: str | None,
         temperature: float | None,
         max_tokens: int | None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> LLMCompletion:
         resolved = ResolvedModel(
             model=model,
@@ -200,7 +281,10 @@ class LiteLLMCaller:
             temperature=temperature,
             max_tokens=max_tokens,
         )
-        response = await litellm.acompletion(**completion_kwargs(resolved, messages))
+        kwargs = completion_kwargs(resolved, messages)
+        if tools:
+            kwargs["tools"] = tools
+        response = await litellm.acompletion(**kwargs)
         choice = response.choices[0]
         message = choice.message
         usage = getattr(response, "usage", None)
@@ -212,6 +296,7 @@ class LiteLLMCaller:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             raw_model=str(getattr(response, "model", "") or model),
+            tool_calls=_tool_calls(message),
         )
 
 

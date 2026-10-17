@@ -82,12 +82,30 @@ def test_cli_run_inspect_and_stdio(tmp_path) -> None:
     assert inspected.exit_code == 0
     assert "human://approve" in inspected.output
 
+    tool_run = runner.invoke(
+        flowise_group,
+        [
+            "run",
+            "--flow",
+            str(EXAMPLES / "tool.json"),
+            "--run-id",
+            "run-tool",
+            "--chatflow-id",
+            "flow-tool",
+            "--state-dir",
+            str(tmp_path),
+        ],
+    )
+    assert tool_run.exit_code == 0, tool_run.output
+    assert "FINISHED" in tool_run.output
+    assert '"text": "4"' in tool_run.output or '"text":"4"' in tool_run.output
+
     unsupported = runner.invoke(
         flowise_group,
         [
             "run",
             "--flow",
-            str(EXAMPLES / "unsupported-tool.json"),
+            str(EXAMPLES / "unknown.json"),
             "--run-id",
             "run-x",
             "--chatflow-id",
@@ -97,7 +115,7 @@ def test_cli_run_inspect_and_stdio(tmp_path) -> None:
         ],
     )
     assert unsupported.exit_code == 1
-    assert "HTTP node" in unsupported.output
+    assert "Unknown Agentflow" in unsupported.output
 
     bad_secret = runner.invoke(
         flowise_group,

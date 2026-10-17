@@ -14,6 +14,13 @@ import httpx
 
 from binex.flowise.a2a import A2AProtocolError, send_a2a
 from binex.flowise.cao import CaoProtocolError, execute_cao, normalize_cao_config
+from binex.flowise.components import (
+    ComponentError,
+    files_from_artifacts,
+    invoke_named_tool,
+    parse_input_args,
+    retrieve_documents,
+)
 from binex.flowise.context import ExecContext
 from binex.flowise.custom_function import run_javascript
 from binex.flowise.errors import NodeExecutionError
@@ -220,7 +227,7 @@ def _condition_matches(condition: dict[str, Any]) -> bool:
     if kind == "number":
         left_num = _as_float(left)
         right_num = _as_float(right)
-        return _compare_number(operation, left_num, right_num)
+        return _compare_number(operation, left_num, right_num, left)
     if kind == "boolean":
         return _compare_bool(operation, _as_bool(left), _as_bool(right))
     return _compare_text(operation, _plain(left), _plain(right))
@@ -251,7 +258,12 @@ def _compare_text(operation: str, left: str, right: str) -> bool:
     return False
 
 
-def _compare_number(operation: str, left: float, right: float) -> bool:
+def _compare_number(operation: str, left: float, right: float, raw_left: Any) -> bool:
+    # Flowise checks isEmpty on the original value, so numeric 0 is not empty.
+    if operation == "isEmpty":
+        return raw_left is None or raw_left == ""
+    if operation == "notEmpty":
+        return raw_left is not None and raw_left != ""
     if operation == "smaller":
         return left < right
     if operation == "smallerEqual":
@@ -264,10 +276,6 @@ def _compare_number(operation: str, left: float, right: float) -> bool:
         return left > right
     if operation == "largerEqual":
         return left >= right
-    if operation == "isEmpty":
-        return left == 0
-    if operation == "notEmpty":
-        return left != 0
     return False
 
 
@@ -424,26 +432,21 @@ async def handle_llm(
         memory=bool(inputs.get("llmEnableMemory", True)),
         memory_type=str(inputs.get("llmMemoryType") or "allMessages"),
         memory_window=inputs.get("llmMemoryWindowSize") or 20,
+        memory_max_tokens=inputs.get("llmMemoryMaxTokenLimit"),
         structured=inputs.get("llmStructuredOutput"),
         state_updates=inputs.get("llmUpdateState"),
         binex_tools=inputs.get("binexTools"),
+        return_as=str(inputs.get("llmReturnResponseAs") or "assistantMessage"),
     )
 
 
 async def handle_agent(
     ctx: ExecContext, node: FlowNode, inputs: dict[str, Any], incoming: Any
 ) -> NodeResult:
-    blocked = _blocked_agent_tools(inputs)
-    binex_tools = inputs.get("binexTools")
-    if blocked:
-        names = ", ".join(blocked)
-        raise NodeExecutionError(
-            node,
-            "Agent node references Flowise tools or knowledge that are not installed in "
-            f"the sandbox ({names}). Remove them, call the service with an HTTP or Custom "
-            "Function node, or set inputs.binexTools to Binex tool URIs and clear the "
-            "Flowise tool list.",
-        )
+    from binex.flowise.agent_loop import flowise_tools_configured, run_tool_agent
+
+    if flowise_tools_configured(inputs):
+        return await run_tool_agent(ctx, node, inputs, incoming)
     return await _chat(
         ctx,
         node,
@@ -455,35 +458,12 @@ async def handle_agent(
         memory=bool(inputs.get("agentEnableMemory", True)),
         memory_type=str(inputs.get("agentMemoryType") or "allMessages"),
         memory_window=inputs.get("agentMemoryWindowSize") or 20,
+        memory_max_tokens=inputs.get("agentMemoryMaxTokenLimit"),
         structured=inputs.get("agentStructuredOutput"),
         state_updates=inputs.get("agentUpdateState"),
-        binex_tools=binex_tools,
+        binex_tools=inputs.get("binexTools"),
+        return_as=str(inputs.get("agentReturnResponseAs") or "assistantMessage"),
     )
-
-
-def _blocked_agent_tools(inputs: dict[str, Any]) -> list[str]:
-    blocked: list[str] = []
-    for key, label in (
-        ("agentTools", "tool"),
-        ("agentToolsBuiltInOpenAI", "OpenAI built-in"),
-        ("agentToolsBuiltInGemini", "Gemini built-in"),
-        ("agentToolsBuiltInAnthropic", "Anthropic built-in"),
-        ("agentKnowledgeDocumentStores", "document store"),
-    ):
-        value = inputs.get(key)
-        if not _configured(value):
-            continue
-        if isinstance(value, list):
-            for item in value:
-                if isinstance(item, dict):
-                    blocked.append(
-                        str(item.get("agentSelectedTool") or item.get("documentStore") or label)
-                    )
-                else:
-                    blocked.append(str(item))
-        else:
-            blocked.append(label)
-    return blocked
 
 
 async def handle_condition_agent(
@@ -575,6 +555,8 @@ async def _chat(
     structured: Any,
     state_updates: Any,
     binex_tools: Any,
+    memory_max_tokens: Any = None,
+    return_as: str = "assistantMessage",
 ) -> NodeResult:
     config = model_config if isinstance(model_config, dict) else {}
     prompt = user_message if isinstance(user_message, str) and user_message.strip() else ""
@@ -584,10 +566,21 @@ async def _chat(
         window = int(memory_window)
     except (TypeError, ValueError):
         window = 20
+    history = list(ctx.chat_history) if memory else []
+    history, memory_type = await _prepare_memory(
+        ctx,
+        node,
+        model,
+        config,
+        history,
+        memory_type,
+        window,
+        memory_max_tokens,
+    )
     transcript = _assemble_messages(
         messages if isinstance(messages, list) else [],
         prompt,
-        ctx.chat_history if memory else [],
+        history,
         memory_type,
         window,
     )
@@ -628,13 +621,84 @@ async def _chat(
     delta = []
     if prompt:
         delta.append({"role": "user", "content": prompt})
-    delta.append({"role": "assistant", "content": completion.content})
+    reply_role = "user" if return_as == "userMessage" else "assistant"
+    delta.append({"role": reply_role, "content": completion.content})
     return NodeResult(
         input={"messages": transcript},
         output=output,
         state=state,
         chat_delta=delta,
     )
+
+
+async def _prepare_memory(
+    ctx: ExecContext,
+    node: FlowNode,
+    model: str,
+    model_config: Any,
+    history: list[dict[str, Any]],
+    memory_type: str,
+    window: int,
+    max_tokens: Any,
+) -> tuple[list[dict[str, Any]], str]:
+    """Window, summary, and summary-buffer memory. Does not edit ``ctx.chat_history``."""
+    if not history:
+        return history, "allMessages" if memory_type != "windowSize" else memory_type
+    if memory_type == "windowSize":
+        return history[-(max(window, 1) * 2) :], "allMessages"
+    if memory_type == "conversationSummary":
+        summary = await _summarize(ctx, node, model, model_config, history)
+        note = f"Summary of the conversation so far:\n{summary}"
+        remembered = [{"role": "system", "content": note}]
+        return remembered, "allMessages"
+    over_budget = _estimate_tokens(history) > _token_limit(max_tokens)
+    if memory_type == "conversationSummaryBuffer" and over_budget:
+        older = history[:-2] if len(history) > 2 else history
+        recent = history[-2:] if len(history) > 2 else []
+        summary = await _summarize(ctx, node, model, model_config, older)
+        remembered = [
+            {"role": "system", "content": f"Summary of the conversation so far:\n{summary}"},
+            *recent,
+        ]
+        return remembered, "allMessages"
+    return history, "allMessages" if memory_type != "windowSize" else memory_type
+
+
+def _token_limit(value: Any) -> int:
+    try:
+        return int(value) if value not in (None, "") else 2000
+    except (TypeError, ValueError):
+        return 2000
+
+
+def _estimate_tokens(messages: list[dict[str, Any]]) -> int:
+    total = 0
+    for item in messages:
+        total += max(1, len(str(item.get("content") or "")) // 4)
+    return total
+
+
+async def _summarize(
+    ctx: ExecContext,
+    node: FlowNode,
+    model: str,
+    model_config: Any,
+    history: list[dict[str, Any]],
+) -> str:
+    transcript = json.dumps(_history_messages(history), default=str)
+    completion = await _complete(
+        ctx,
+        node,
+        model,
+        model_config,
+        [
+            {
+                "role": "user",
+                "content": "Summarize this conversation in a few sentences:\n" + transcript,
+            }
+        ],
+    )
+    return completion.content
 
 
 def _assemble_messages(
@@ -1057,6 +1121,326 @@ def _with_turn(exc: Exception, turn: dict[str, Any]) -> Exception:
     return exc
 
 
+async def handle_tool(
+    ctx: ExecContext, node: FlowNode, inputs: dict[str, Any], incoming: Any
+) -> NodeResult:
+    selected = inputs.get("toolAgentflowSelectedTool") or inputs.get("selectedTool")
+    name = str(selected or "").strip()
+    if not name:
+        raise NodeExecutionError(node, "Tool not selected")
+    config = inputs.get("toolAgentflowSelectedToolConfig") or inputs.get("selectedToolConfig")
+    config = config or {}
+    if not isinstance(config, dict):
+        config = {}
+    args = parse_input_args(inputs.get("toolInputArgs"))
+    if not args:
+        text = incoming_text(incoming) or ctx.question
+        if text:
+            args = {"input": text, "expression": text}
+    try:
+        result = await invoke_named_tool(
+            ctx,
+            name=name,
+            args=args,
+            credential=ctx.credential_for(node.id, node.credential),
+            config=config,
+        )
+    except ComponentError as exc:
+        raise NodeExecutionError(node, str(exc)) from exc
+    output: dict[str, Any] = {"content": result.content}
+    if result.source_documents:
+        output["sourceDocuments"] = result.source_documents
+    files = files_from_artifacts(result.artifacts)
+    if files:
+        output["files"] = files
+        output["artifacts"] = result.artifacts
+    state = apply_state_updates(ctx.state, inputs.get("toolUpdateState"))
+    return NodeResult(input={"tool": name, "args": args}, output=output, state=state)
+
+
+async def handle_retriever(
+    ctx: ExecContext, node: FlowNode, inputs: dict[str, Any], incoming: Any
+) -> NodeResult:
+    query = inputs.get("retrieverQuery")
+    text = query.strip() if isinstance(query, str) and query.strip() else ""
+    if not text:
+        text = incoming_text(incoming) or ctx.question
+    stores = inputs.get("retrieverKnowledgeDocumentStores") or inputs.get("documentStores") or []
+    vectors = inputs.get("retrieverVectorStores") or []
+    if not isinstance(stores, list):
+        stores = []
+    if not isinstance(vectors, list):
+        vectors = []
+    if not stores and not vectors:
+        raise NodeExecutionError(node, "Retriever requires a document store or vector store")
+    documents: list[dict[str, Any]] = []
+    try:
+        for item in stores:
+            store_id = _store_id(item)
+            if not store_id:
+                continue
+            documents.extend(
+                await retrieve_documents(
+                    ctx,
+                    store_id=store_id,
+                    query=text,
+                    kind="retriever",
+                    credential=ctx.credential_for(node.id, node.credential),
+                    inputs=item if isinstance(item, dict) else {},
+                )
+            )
+        for item in vectors:
+            if not isinstance(item, dict):
+                continue
+            store_id = str(item.get("vectorStore") or item.get("id") or "")
+            documents.extend(
+                await retrieve_documents(
+                    ctx,
+                    store_id=store_id,
+                    query=text,
+                    kind="vectorstore",
+                    component=str(item.get("vectorStore") or ""),
+                    credential=ctx.credential_for(node.id, node.credential),
+                    inputs=item,
+                )
+            )
+    except ComponentError as exc:
+        raise NodeExecutionError(node, str(exc)) from exc
+    style = str(inputs.get("outputFormat") or inputs.get("retrieverOutputFormat") or "text")
+    if style == "textWithMetadata":
+        content = json.dumps(documents, default=str)
+    else:
+        content = "\n".join(str(doc.get("pageContent") or "") for doc in documents)
+    state = apply_state_updates(ctx.state, inputs.get("retrieverUpdateState"))
+    return NodeResult(
+        input={"query": text},
+        output={"content": content, "sourceDocuments": documents},
+        state=state,
+    )
+
+
+def _store_id(item: Any) -> str:
+    if isinstance(item, str):
+        return item.split(":", 1)[0]
+    if isinstance(item, dict):
+        raw = str(item.get("documentStore") or item.get("id") or "")
+        return raw.split(":", 1)[0]
+    return ""
+
+
+async def handle_execute_flow(
+    ctx: ExecContext, node: FlowNode, inputs: dict[str, Any], incoming: Any
+) -> NodeResult:
+    from binex.flowise.components import prediction_base
+    from binex.flowise.engine import execute_flow
+    from binex.flowise.protocol import RunRequest
+
+    selected = str(inputs.get("executeFlowSelectedFlow") or "").strip()
+    if not selected:
+        raise NodeExecutionError(node, "Execute Flow requires executeFlowSelectedFlow")
+    if selected == ctx.request.chatflow_id:
+        raise NodeExecutionError(node, "Cannot call the same agentflow")
+    if ctx.flow_depth >= 5:
+        raise NodeExecutionError(node, "Execute Flow nesting is deeper than 5")
+    question = inputs.get("executeFlowInput")
+    text = question.strip() if isinstance(question, str) and question.strip() else ""
+    if not text:
+        text = incoming_text(incoming) or ctx.question
+    override = _override_config(node, inputs.get("executeFlowOverrideConfig"))
+    role = (
+        "user"
+        if str(inputs.get("executeFlowReturnResponseAs") or "userMessage") == "userMessage"
+        else "assistant"
+    )
+    child_flow = ctx.request.flows.get(selected) if isinstance(ctx.request.flows, dict) else None
+    if child_flow is not None:
+        outcome = await _run_nested_flow(
+            ctx, node, execute_flow, RunRequest, selected, text, override, child_flow
+        )
+    else:
+        outcome_text, extra = await _run_prediction(
+            ctx,
+            node,
+            prediction_base,
+            str(inputs.get("executeFlowBaseURL") or ""),
+            selected,
+            text,
+            override,
+        )
+        output = {"content": outcome_text, **extra}
+        state = apply_state_updates(ctx.state, inputs.get("executeFlowUpdateState"))
+        return NodeResult(
+            input={"flowId": selected, "question": text},
+            output=output,
+            state=state,
+            chat_delta=[{"role": role, "content": outcome_text}] if outcome_text else [],
+        )
+    if outcome.status == "ERROR":
+        raise NodeExecutionError(node, outcome.error or "Execute Flow failed")
+    if outcome.status == "STOPPED":
+        ctx.nested_resume = {
+            "nodeId": node.id,
+            "chatflowId": selected,
+            "startNodeId": outcome.pause_node_id,
+        }
+        return NodeResult(
+            input={"flowId": selected, "question": text},
+            output={"content": outcome.text, "humanInputMode": "approve"},
+            state=dict(ctx.state),
+            status="STOPPED",
+        )
+    state = apply_state_updates(ctx.state, inputs.get("executeFlowUpdateState"))
+    return NodeResult(
+        input={"flowId": selected, "question": text},
+        output={"content": outcome.text, "nestedExecution": outcome.execution_data},
+        state=state,
+        chat_delta=[{"role": role, "content": outcome.text}] if outcome.text else [],
+    )
+
+
+def _override_config(node: FlowNode, raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, str) and raw.strip():
+        try:
+            loaded = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise NodeExecutionError(node, "executeFlowOverrideConfig must be JSON") from exc
+        if isinstance(loaded, dict):
+            return loaded
+    return {}
+
+
+async def _run_nested_flow(
+    ctx: ExecContext,
+    node: FlowNode,
+    execute_flow: Any,
+    run_request: Any,
+    selected: str,
+    text: str,
+    override: dict[str, Any],
+    child_flow: Any,
+) -> Any:
+    variables = dict(ctx.request.variables)
+    extra_vars = override.get("vars")
+    if isinstance(extra_vars, dict):
+        variables.update(extra_vars)
+    child_inputs: dict[str, Any] = {
+        "question": text,
+        "history": list(ctx.chat_history),
+        "chatType": "INTERNAL",
+    }
+    for key in ("question", "history", "form", "webhook"):
+        if key in override:
+            child_inputs[key] = override[key]
+    resume = None
+    nested = ctx.nested_resume if isinstance(ctx.nested_resume, dict) else None
+    if nested and nested.get("nodeId") == node.id and isinstance(ctx.human_input, dict):
+        human = dict(ctx.human_input)
+        human["startNodeId"] = nested.get("startNodeId")
+        ctx.human_input = None
+        ctx.nested_resume = None
+        resume = {"humanInput": human}
+    child = run_request.model_validate(
+        {
+            "runId": f"{ctx.request.run_id}:{selected}",
+            "chatflowId": selected,
+            "sessionId": ctx.request.session_id,
+            "workspaceId": ctx.request.workspace_id,
+            "orgId": ctx.request.org_id,
+            "flow": child_flow,
+            "inputs": child_inputs,
+            "secrets": dict(ctx.request.secrets),
+            "credentials": dict(ctx.request.credentials),
+            "vars": variables,
+            "flows": dict(ctx.request.flows),
+            "knowledge": dict(ctx.request.knowledge),
+            "componentUrl": ctx.request.component_url,
+            "callbackToken": ctx.request.callback_token,
+            "resume": resume,
+        }
+    )
+    return await execute_flow(
+        child,
+        ctx.sink,
+        store=ctx.store,
+        llm=ctx.llm,
+        http=ctx.http,
+        js_runner=ctx.js_runner,
+        skip_ssrf=ctx.skip_ssrf,
+        max_steps=max(1, ctx.max_steps - ctx.steps),
+        nested=True,
+        depth=ctx.flow_depth + 1,
+    )
+
+
+async def _run_prediction(
+    ctx: ExecContext,
+    node: FlowNode,
+    prediction_base: Any,
+    node_base: str,
+    selected: str,
+    text: str,
+    override: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    from binex.flowise.components import PREDICTION_PATH
+
+    base, check = prediction_base(node_base, ctx.request)
+    if not base:
+        raise NodeExecutionError(
+            node,
+            "Execute Flow child is not in the run payload and no Flowise base URL is set. "
+            "Pass flows[chatflowId] or FLOWISE_BASE_URL / executeFlowBaseURL.",
+        )
+    url = f"{base}{PREDICTION_PATH}/{selected}"
+    if check and not ctx.skip_ssrf:
+        try:
+            validate_url(url)
+        except BlockedURLError as exc:
+            raise NodeExecutionError(node, str(exc)) from exc
+    credential = ctx.credential_for(node.id, node.credential)
+    headers = {"Content-Type": "application/json", "flowise-tool": "true"}
+    token = credential.get("chatflowApiKey") or credential.get("apiKey")
+    if isinstance(token, str) and token:
+        headers["Authorization"] = f"Bearer {token}"
+    body = {
+        "question": text,
+        "chatId": str(ctx.request.inputs.get("chatId") or ctx.request.session_key),
+        "overrideConfig": override,
+    }
+    try:
+        response = await ctx.http.post(url, json=body, headers=headers, timeout=120)
+    except Exception as exc:
+        raise NodeExecutionError(node, f"Execute Flow request failed: {exc}") from exc
+    if response.status_code >= 400:
+        raise NodeExecutionError(
+            node, f"Execute Flow returned {response.status_code}: {response.text[:300]}"
+        )
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise NodeExecutionError(node, "Execute Flow response was not JSON") from exc
+    if not isinstance(data, dict):
+        return str(data), {}
+    content = data.get("text")
+    if not isinstance(content, str) or not content:
+        if data.get("json") is not None:
+            content = "```json\n" + json.dumps(data["json"], default=str) + "\n```"
+        else:
+            content = json.dumps(data, default=str)
+    extra: dict[str, Any] = {}
+    for key in ("sourceDocuments", "usedTools", "fileAnnotations"):
+        if key in data:
+            extra[key] = data[key]
+    artifacts = data.get("artifacts")
+    if isinstance(artifacts, list):
+        extra["artifacts"] = artifacts
+        files = files_from_artifacts([item for item in artifacts if isinstance(item, dict)])
+        if files:
+            extra["files"] = files
+    return content, extra
+
+
 HANDLERS = {
     "startAgentflow": handle_start,
     "llmAgentflow": handle_llm,
@@ -1070,6 +1454,9 @@ HANDLERS = {
     "directReplyAgentflow": handle_direct_reply,
     "a2aAgentflow": handle_a2a,
     "caoAgentflow": handle_cao,
+    "toolAgentflow": handle_tool,
+    "retrieverAgentflow": handle_retriever,
+    "executeFlowAgentflow": handle_execute_flow,
 }
 
 __all__ = ["DECISION_NODES", "HANDLERS", "NodeResult", "incoming_text", "output_text"]

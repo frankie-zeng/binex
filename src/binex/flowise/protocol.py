@@ -45,6 +45,10 @@ class RunRequest(BaseModel):
     credentials: dict[str, dict[str, Any]] = Field(default_factory=dict)
     variables: dict[str, Any] = Field(default_factory=dict, alias="vars")
     resume: dict[str, Any] | None = None
+    flows: dict[str, Any] = Field(default_factory=dict)
+    knowledge: dict[str, Any] = Field(default_factory=dict)
+    component_url: str = Field(default="", alias="componentUrl")
+    callback_token: str = Field(default="", alias="callbackToken")
 
     @property
     def session_key(self) -> str:

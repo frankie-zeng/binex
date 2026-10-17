@@ -1,0 +1,34 @@
+{
+  "nodes": [
+    {
+      "id": "startAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "startAgentflow",
+        "label": "Start",
+        "inputs": {"startInputType": "chatInput"}
+      }
+    },
+    {
+      "id": "httpAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "httpAgentflow",
+        "label": "HTTP",
+        "inputs": {
+          "method": "GET",
+          "url": "https://example.com/search",
+          "queryParams": [{"key": "q", "value": "{{ question }}"}],
+          "responseType": "json"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "startAgentflow_0",
+      "target": "httpAgentflow_0",
+      "sourceHandle": "startAgentflow_0-output-0"
+    }
+  ]
+}

@@ -95,6 +95,19 @@ def test_model_resolution_and_schema() -> None:
         "anthropic/"
     )
     assert resolve_model("openai/gpt-4o-mini", {}).model == "openai/gpt-4o-mini"
+    assert resolve_model("chatGroq", {"modelName": "llama-3.1-8b-instant"}).model == (
+        "groq/llama-3.1-8b-instant"
+    )
+    assert resolve_model("chatLitellm", {"modelName": "openai/gpt-4o-mini"}).model == (
+        "openai/gpt-4o-mini"
+    )
+    custom = resolve_model(
+        "chatLocal",
+        {"modelName": "local-model", "baseUrl": "http://localhost:8080", "groqApiKey": "g-key"},
+    )
+    assert custom.model == "openai/local-model"
+    assert custom.api_base == "http://localhost:8080"
+    assert custom.api_key == "g-key"
     with pytest.raises(RuntimeError):
         resolve_model("chatOpenAI", {})
     schema = structured_schema(
@@ -190,7 +203,28 @@ async def test_llm_example_and_agent_guards(tmp_path) -> None:
     )
     assert usage["output"]["usageMetadata"]["input_tokens"] == 3
 
-    blocked = graph(
+    class Scripted:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        async def complete(self, **kwargs: Any) -> LLMCompletion:
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                return LLMCompletion(
+                    content="",
+                    model=kwargs["model"],
+                    tool_calls=[
+                        {
+                            "id": "call-1",
+                            "name": "calculator",
+                            "arguments": '{"expression": "2+2"}',
+                        }
+                    ],
+                )
+            return LLMCompletion(content="4", model=kwargs["model"])
+
+    scripted = Scripted()
+    tooled = graph(
         [
             _start(),
             node(
@@ -200,15 +234,15 @@ async def test_llm_example_and_agent_guards(tmp_path) -> None:
                     "agentModel": "openai/gpt-4o-mini",
                     "agentUserMessage": "hi",
                     "agentTools": [{"agentSelectedTool": "calculator"}],
-                    "binexTools": ["local://echo"],
                 },
             ),
         ],
         [edge("start", "agent")],
     )
-    failed, _events, _store = await _collect(blocked, tmp_path, llm=llm, sessionId="agent")
-    assert failed.status == "ERROR"
-    assert "calculator" in (failed.error or "")
+    ran_tool, _events, _store = await _collect(tooled, tmp_path, llm=scripted, sessionId="agent")
+    assert ran_tool.status == "FINISHED"
+    assert ran_tool.text == "4"
+    assert any(item.get("role") == "tool" for item in scripted.calls[1]["messages"])
 
     allowed = graph(
         [
