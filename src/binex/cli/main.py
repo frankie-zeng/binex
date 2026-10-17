@@ -40,6 +40,7 @@ from binex.cli.trace import trace_cmd
 from binex.cli.ui_cmd import ui_cmd
 from binex.cli.validate import validate_cmd
 from binex.cli.workflow_cmd import workflow_group
+from binex.flowise.cli import flowise_group
 from binex.telemetry import init_telemetry
 
 _EPILOG = """\b
@@ -100,6 +101,7 @@ cli.add_command(collect_cmd, "collect")
 cli.add_command(eval_group, "eval")
 cli.add_command(import_group, "import")
 cli.add_command(mcp_group, "mcp")
+cli.add_command(flowise_group, "flowise")
 
 
 def main() -> None:

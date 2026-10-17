@@ -1,0 +1,60 @@
+{
+  "nodes": [
+    {
+      "id": "startAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "startAgentflow",
+        "label": "Start",
+        "inputs": {"startInputType": "chatInput"}
+      }
+    },
+    {
+      "id": "humanInputAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "humanInputAgentflow",
+        "label": "Approve",
+        "inputs": {
+          "humanInputMode": "approve",
+          "humanInputDescription": "Ship it?"
+        }
+      }
+    },
+    {
+      "id": "directReplyAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "directReplyAgentflow",
+        "label": "Proceed",
+        "inputs": {"directReplyMessage": "proceeded"}
+      }
+    },
+    {
+      "id": "directReplyAgentflow_1",
+      "type": "agentFlow",
+      "data": {
+        "name": "directReplyAgentflow",
+        "label": "Reject",
+        "inputs": {"directReplyMessage": "rejected"}
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "startAgentflow_0",
+      "target": "humanInputAgentflow_0",
+      "sourceHandle": "startAgentflow_0-output-0"
+    },
+    {
+      "source": "humanInputAgentflow_0",
+      "target": "directReplyAgentflow_0",
+      "sourceHandle": "humanInputAgentflow_0-output-0"
+    },
+    {
+      "source": "humanInputAgentflow_0",
+      "target": "directReplyAgentflow_1",
+      "sourceHandle": "humanInputAgentflow_0-output-1"
+    }
+  ]
+}

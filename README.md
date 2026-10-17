@@ -150,6 +150,22 @@ docker run --rm -v binex-data:/data binex binex run workflow.yaml
 > The separate `docker/docker-compose.yml` is a different deployment — the A2A
 > agent-server mesh (planner/researcher/… + Ollama + LiteLLM), not the Web UI.
 
+### Flowise sandbox executor
+
+This fork can run a [Flowise](https://github.com/frankie-zeng/Flowise) Agentflow
+**inside the workflow sandbox** so the Flowise server only edits and views.
+`binex flowise` loads the flow JSON, walks it, and streams node events,
+artifacts, and A2A/CAO conversation records. Build the image from the repo root:
+
+```bash
+docker build -f sandbox/Dockerfile -t binex-flowise-executor .
+```
+
+LLM keys are passed on each run (`--secret OPENAI_API_KEY=...` or the JSON
+`secrets` field). They are not baked into the image. Sample flows live in
+`examples/flowise/`. Protocol, support matrix, and the Flowise server changes
+still required are in [docs/flowise-sandbox.md](docs/flowise-sandbox.md).
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ---

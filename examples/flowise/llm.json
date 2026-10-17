@@ -1,0 +1,48 @@
+{
+  "nodes": [
+    {
+      "id": "startAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "startAgentflow",
+        "label": "Start",
+        "inputs": {"startInputType": "chatInput"}
+      }
+    },
+    {
+      "id": "llmAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "llmAgentflow",
+        "label": "LLM",
+        "inputs": {
+          "llmModel": "openai/gpt-4o-mini",
+          "llmUserMessage": "{{ question }}",
+          "llmMessages": [{"role": "system", "content": "Be brief."}],
+          "llmUpdateState": [{"key": "last", "value": "{{ output }}"}]
+        }
+      }
+    },
+    {
+      "id": "directReplyAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "directReplyAgentflow",
+        "label": "Reply",
+        "inputs": {"directReplyMessage": "{{ llmAgentflow_0 }}"}
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "startAgentflow_0",
+      "target": "llmAgentflow_0",
+      "sourceHandle": "startAgentflow_0-output-0"
+    },
+    {
+      "source": "llmAgentflow_0",
+      "target": "directReplyAgentflow_0",
+      "sourceHandle": "llmAgentflow_0-output-0"
+    }
+  ]
+}

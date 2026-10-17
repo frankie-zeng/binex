@@ -1,0 +1,38 @@
+{
+  "nodes": [
+    {
+      "id": "startAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "startAgentflow",
+        "label": "Start",
+        "inputs": {"startInputType": "chatInput"}
+      }
+    },
+    {
+      "id": "toolAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "toolAgentflow",
+        "label": "Tool",
+        "inputs": {"toolAgentflowSelectedTool": "calculator"}
+      }
+    },
+    {
+      "id": "stickyNoteAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "stickyNoteAgentflow",
+        "label": "Note",
+        "inputs": {"note": "ignored"}
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "startAgentflow_0",
+      "target": "toolAgentflow_0",
+      "sourceHandle": "startAgentflow_0-output-0"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+# E2B-compatible template for one Flowise workflow sandbox.
+# Aliyun ACS Agent Sandbox speaks this SDK. Build from the repository root
+# so the Dockerfile can copy the Binex package:
+#
+#   docker build -f sandbox/Dockerfile -t binex-flowise-executor .
+#   e2b template build
+#
+# Do not put API keys in the template. The Flowise server sends them per run.
+
+template_name = "binex-flowise-executor"
+dockerfile = "sandbox/Dockerfile"
+start_cmd = "/usr/local/bin/binex-flowise-entrypoint"

@@ -1,0 +1,61 @@
+{
+  "nodes": [
+    {
+      "id": "startAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "startAgentflow",
+        "label": "Start",
+        "inputs": {"startInputType": "chatInput"}
+      }
+    },
+    {
+      "id": "body",
+      "type": "agentFlow",
+      "data": {
+        "name": "directReplyAgentflow",
+        "label": "Body",
+        "inputs": {"directReplyMessage": "step"}
+      }
+    },
+    {
+      "id": "loopAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "loopAgentflow",
+        "label": "Loop",
+        "inputs": {
+          "loopBackToNode": "body",
+          "maxLoopCount": 2,
+          "fallbackMessage": "loop finished"
+        }
+      }
+    },
+    {
+      "id": "directReplyAgentflow_1",
+      "type": "agentFlow",
+      "data": {
+        "name": "directReplyAgentflow",
+        "label": "Exit",
+        "inputs": {"directReplyMessage": "done"}
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "startAgentflow_0",
+      "target": "body",
+      "sourceHandle": "startAgentflow_0-output-0"
+    },
+    {
+      "source": "body",
+      "target": "loopAgentflow_0",
+      "sourceHandle": "body-output-0"
+    },
+    {
+      "source": "loopAgentflow_0",
+      "target": "directReplyAgentflow_1",
+      "sourceHandle": "loopAgentflow_0-output-0"
+    }
+  ]
+}
