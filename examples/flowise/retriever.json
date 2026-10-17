@@ -1,0 +1,33 @@
+{
+  "nodes": [
+    {
+      "id": "startAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "startAgentflow",
+        "label": "Start",
+        "inputs": {"startInputType": "chatInput"}
+      }
+    },
+    {
+      "id": "retrieverAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "retrieverAgentflow",
+        "label": "Retriever",
+        "inputs": {
+          "retrieverKnowledgeDocumentStores": [{"documentStore": "docs:Articles"}],
+          "retrieverQuery": "{{ question }}",
+          "outputFormat": "text"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "startAgentflow_0",
+      "target": "retrieverAgentflow_0",
+      "sourceHandle": "startAgentflow_0-output-0"
+    }
+  ]
+}

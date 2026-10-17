@@ -1,0 +1,34 @@
+{
+  "nodes": [
+    {
+      "id": "startAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "startAgentflow",
+        "label": "Start",
+        "inputs": {"startInputType": "chatInput"}
+      }
+    },
+    {
+      "id": "customFunctionAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "customFunctionAgentflow",
+        "label": "Function",
+        "inputs": {
+          "customFunctionInputVariables": [
+            {"variableName": "name", "variableValue": "Ada"}
+          ],
+          "customFunctionJavascriptFunction": "return $name + ' ' + $flow.input.question;"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "startAgentflow_0",
+      "target": "customFunctionAgentflow_0",
+      "sourceHandle": "startAgentflow_0-output-0"
+    }
+  ]
+}

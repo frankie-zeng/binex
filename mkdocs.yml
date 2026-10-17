@@ -94,6 +94,7 @@ nav:
     - Import from OTel: import.md
     - Tools & MCP: features/tools-mcp.md
     - CAO Adapter: features/cao-adapter.md
+    - Flowise sandbox: flowise-sandbox.md
     - vs LangSmith / Langfuse / n8n: comparisons.md
   - Workflows:
     - Format: workflows/format.md

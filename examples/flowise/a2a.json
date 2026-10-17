@@ -1,0 +1,32 @@
+{
+  "nodes": [
+    {
+      "id": "startAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "startAgentflow",
+        "label": "Start",
+        "inputs": {"startInputType": "chatInput"}
+      }
+    },
+    {
+      "id": "a2aAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "a2aAgentflow",
+        "label": "A2A",
+        "inputs": {
+          "a2aAgentUrl": "http://agent.test/rpc",
+          "a2aMessage": "{{ question }}"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "startAgentflow_0",
+      "target": "a2aAgentflow_0",
+      "sourceHandle": "startAgentflow_0-output-0"
+    }
+  ]
+}

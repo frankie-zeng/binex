@@ -1,0 +1,60 @@
+{
+  "nodes": [
+    {
+      "id": "startAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "startAgentflow",
+        "label": "Start",
+        "inputs": {"startInputType": "chatInput"}
+      }
+    },
+    {
+      "id": "conditionAgentAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "conditionAgentAgentflow",
+        "label": "Route",
+        "inputs": {
+          "conditionAgentModel": "openai/gpt-4o-mini",
+          "conditionAgentScenarios": [{"scenario": "yes"}, {"scenario": "no"}]
+        }
+      }
+    },
+    {
+      "id": "directReplyAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "directReplyAgentflow",
+        "label": "Yes",
+        "inputs": {"directReplyMessage": "yes"}
+      }
+    },
+    {
+      "id": "directReplyAgentflow_1",
+      "type": "agentFlow",
+      "data": {
+        "name": "directReplyAgentflow",
+        "label": "No",
+        "inputs": {"directReplyMessage": "no"}
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "startAgentflow_0",
+      "target": "conditionAgentAgentflow_0",
+      "sourceHandle": "startAgentflow_0-output-0"
+    },
+    {
+      "source": "conditionAgentAgentflow_0",
+      "target": "directReplyAgentflow_0",
+      "sourceHandle": "conditionAgentAgentflow_0-output-0"
+    },
+    {
+      "source": "conditionAgentAgentflow_0",
+      "target": "directReplyAgentflow_1",
+      "sourceHandle": "conditionAgentAgentflow_0-output-1"
+    }
+  ]
+}

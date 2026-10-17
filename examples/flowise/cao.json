@@ -1,0 +1,35 @@
+{
+  "nodes": [
+    {
+      "id": "startAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "startAgentflow",
+        "label": "Start",
+        "inputs": {"startInputType": "chatInput"}
+      }
+    },
+    {
+      "id": "caoAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "caoAgentflow",
+        "label": "CAO",
+        "inputs": {
+          "caoProvider": "claude_code",
+          "caoMode": "handoff",
+          "caoAgentProfile": "developer",
+          "caoTask": "{{ question }}",
+          "caoServerUrl": "http://127.0.0.1:9889"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "startAgentflow_0",
+      "target": "caoAgentflow_0",
+      "sourceHandle": "startAgentflow_0-output-0"
+    }
+  ]
+}

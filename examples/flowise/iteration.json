@@ -1,0 +1,53 @@
+{
+  "nodes": [
+    {
+      "id": "startAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "startAgentflow",
+        "label": "Start",
+        "inputs": {"startInputType": "chatInput"}
+      }
+    },
+    {
+      "id": "iterationAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "iterationAgentflow",
+        "label": "Iteration",
+        "inputs": {"iterationInput": "[\"a\", \"b\"]"}
+      }
+    },
+    {
+      "id": "directReplyAgentflow_0",
+      "parentNode": "iterationAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "directReplyAgentflow",
+        "label": "Item",
+        "inputs": {"directReplyMessage": "{{ $iteration }}"}
+      }
+    },
+    {
+      "id": "directReplyAgentflow_1",
+      "type": "agentFlow",
+      "data": {
+        "name": "directReplyAgentflow",
+        "label": "After",
+        "inputs": {"directReplyMessage": "{{ iterationAgentflow_0 }}"}
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "startAgentflow_0",
+      "target": "iterationAgentflow_0",
+      "sourceHandle": "startAgentflow_0-output-0"
+    },
+    {
+      "source": "iterationAgentflow_0",
+      "target": "directReplyAgentflow_1",
+      "sourceHandle": "iterationAgentflow_0-output-0"
+    }
+  ]
+}

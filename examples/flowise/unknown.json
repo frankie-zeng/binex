@@ -1,0 +1,29 @@
+{
+  "nodes": [
+    {
+      "id": "startAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "startAgentflow",
+        "label": "Start",
+        "inputs": {"startInputType": "chatInput"}
+      }
+    },
+    {
+      "id": "mystery_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "notANode",
+        "label": "Mystery",
+        "inputs": {}
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "startAgentflow_0",
+      "target": "mystery_0",
+      "sourceHandle": "startAgentflow_0-output-0"
+    }
+  ]
+}

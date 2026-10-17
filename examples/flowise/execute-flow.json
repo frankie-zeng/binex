@@ -1,0 +1,33 @@
+{
+  "nodes": [
+    {
+      "id": "startAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "startAgentflow",
+        "label": "Start",
+        "inputs": {"startInputType": "chatInput"}
+      }
+    },
+    {
+      "id": "executeFlowAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "executeFlowAgentflow",
+        "label": "Child",
+        "inputs": {
+          "executeFlowSelectedFlow": "child-flow",
+          "executeFlowInput": "{{ question }}",
+          "executeFlowReturnResponseAs": "assistantMessage"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "startAgentflow_0",
+      "target": "executeFlowAgentflow_0",
+      "sourceHandle": "startAgentflow_0-output-0"
+    }
+  ]
+}

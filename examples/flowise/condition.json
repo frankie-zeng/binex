@@ -1,0 +1,66 @@
+{
+  "nodes": [
+    {
+      "id": "startAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "startAgentflow",
+        "label": "Start",
+        "inputs": {"startInputType": "chatInput"}
+      }
+    },
+    {
+      "id": "conditionAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "conditionAgentflow",
+        "label": "Condition",
+        "inputs": {
+          "conditions": [
+            {
+              "type": "string",
+              "value1": "{{ question }}",
+              "operation": "equal",
+              "value2": "yes"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "directReplyAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "directReplyAgentflow",
+        "label": "Yes",
+        "inputs": {"directReplyMessage": "approved"}
+      }
+    },
+    {
+      "id": "directReplyAgentflow_1",
+      "type": "agentFlow",
+      "data": {
+        "name": "directReplyAgentflow",
+        "label": "No",
+        "inputs": {"directReplyMessage": "rejected"}
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "startAgentflow_0",
+      "target": "conditionAgentflow_0",
+      "sourceHandle": "startAgentflow_0-output-0"
+    },
+    {
+      "source": "conditionAgentflow_0",
+      "target": "directReplyAgentflow_0",
+      "sourceHandle": "conditionAgentflow_0-output-0"
+    },
+    {
+      "source": "conditionAgentflow_0",
+      "target": "directReplyAgentflow_1",
+      "sourceHandle": "conditionAgentflow_0-output-1"
+    }
+  ]
+}

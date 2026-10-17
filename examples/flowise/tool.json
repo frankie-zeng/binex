@@ -1,0 +1,42 @@
+{
+  "nodes": [
+    {
+      "id": "startAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "startAgentflow",
+        "label": "Start",
+        "inputs": {"startInputType": "chatInput"}
+      }
+    },
+    {
+      "id": "toolAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "toolAgentflow",
+        "label": "Calculator",
+        "inputs": {
+          "toolAgentflowSelectedTool": "calculator",
+          "toolInputArgs": [{"inputArgName": "expression", "inputArgValue": "2+2"}],
+          "toolUpdateState": [{"key": "last", "value": "{{ output }}"}]
+        }
+      }
+    },
+    {
+      "id": "stickyNoteAgentflow_0",
+      "type": "agentFlow",
+      "data": {
+        "name": "stickyNoteAgentflow",
+        "label": "Note",
+        "inputs": {"note": "skipped at runtime"}
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "startAgentflow_0",
+      "target": "toolAgentflow_0",
+      "sourceHandle": "startAgentflow_0-output-0"
+    }
+  ]
+}
